@@ -7,6 +7,8 @@ import numpy as np
 
 from Services.contours import classify
 
+COLORS_FILE = "colors.json"
+CALIB_FILE = "calibration.json"
 
 # Colors for object detection using HSV
 DEFAULT_COLORS = {
@@ -105,7 +107,7 @@ def draw(frame, detections):
 
         
 def make_homography(corners_px, width_mm, height_mm):
-    """Pixel corners (TR, TL, BL, BR) -> matrix that maps to pixel on table."""
+    """Pixel corners (TL, TR, BR, BL) -> matrix that maps to pixel on table."""
     src = np.array(corners_px, dtype=np.float32)
     dst = np.array([[0,0], [width_mm, 0], [width_mm, height_mm], [0, height_mm]], dtype=np.float32)
     return cv2.getPerspectiveTransform(src, dst)
@@ -128,9 +130,9 @@ def save_json(path, data):
     print(f"Saved {path}")
 
 def open_tuner(rng):
-    cv2.namedWidow("true")
+    cv2.namedWindow("tune")
     for i, name in enumerate(TRACKBARS):
-        cv2.createTracjbar(name, "tune", 0, 179 if i < 2 else 255, lambda v: None)
+        cv2.createTrackbar(name, "tune", 0, 179 if i < 2 else 255, lambda v: None)
     set_tuner(rng)
 
 def set_tuner(rng):
@@ -139,14 +141,14 @@ def set_tuner(rng):
         cv2.setTrackbarPos(name, "tune", int(v))
 
 def read_tuner(): 
-    h1, h2, s1, s2, v1, v2 = (cv2.getTrckbarPos(n, "tune") for n in TRACKBARS)
+    h1, h2, s1, s2, v1, v2 = (cv2.getTrackbarPos(n, "tune") for n in TRACKBARS)
     return {"lo": [h1, s1, v1], "hi": [h2, s2, v2]}
 
 def main():
-    ap = argparse.ArgumentParrser()
-    ap.add_agrument("--source", default="0", help="camera index or video file path")
-    ap.add_argument("---min-area", type=int, default=800, help="ignore blops smaller than this (pixels)")
-    ap.add_argument("---width", type=int, default=640, help="resize frames to this width")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--source", default="0", help="camera index or video file path")
+    ap.add_argument("--min-area", type=int, default=800, help="ignore blobs smaller than this (pixels)")
+    ap.add_argument("--width", type=int, default=640, help="resize frames to this width")
     ap.add_argument("--work-w", type=float, default=279.4, help="workspace width in mm (default: letter paper size)")
     ap.add_argument("--work-h", type=float, default=215.9, help="workspace height in mm")
     args = ap.parse_args()
@@ -154,13 +156,13 @@ def main():
     source = int(args.source) if args.source.isdigit() else args.source
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        raise SystemExit(f"Could not open camera/source: {args.source}" 
+        raise SystemExit(f"Could not open camera/source: {args.source} " 
                          "(on a Mac, allow camera access for your terminal in System Settings)")
 
     colors = load_json(COLORS_FILE, DEFAULT_COLORS)
     calib = load_json(CALIB_FILE, None)
     H = None
-    if calib and calib.get("frame_wdith") == args.width:
+    if calib and calib.get("frame_width") == args.width:
         H = make_homography(calib["corners_px"], calib["width_mm"], calib["height_mm"])
         print("loaded calibration form", CALIB_FILE)
 
@@ -210,60 +212,60 @@ def main():
                 calib = {"corners_px": list(clicks)}
                 calibrating = False
 
+        else: 
+            detections = detect(frame, colors, args.min_area, H)
+            draw(view, detections)
+
+            if calib: 
+                pts = np.array(calib["corners_px"], dtype= np.int32)
+                cv2.polylines(view, [pts], True, (0, 255, 0), 1)
+
+                status = f"objects={len(detections)} calibrated={'yes' if H is not None else 'no (press K)'}"
+                if tuning:
+                    status += f" tuning={tune_names[tune_idx]} (n=next, s=save)"
+                cv2.putText(view, status, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+
+        cv2.imshow("vision", view)
+        if tuning:
+            hsv = cv2.cvtColor(cv2.GaussianBlur(frame, (5, 5), 0), cv2.COLOR_BGR2HSV)
+            cv2.imshow("mask", clean(color_mask(hsv, colors[tune_names[tune_idx]])))
+
+        key = cv2.waitKey(1) & 0xFF
+
+        if key in (ord("q"), 27):
+            break
+        elif key == ord(" "):
+            paused = not paused
+
+        elif key == ord("p"):
+            if not detections:
+                print("no objects detected")
+            for d in detections:
+                where = f'{d["mm"][0]:.1f}, {d["mm"][1]:.1f} mm' if d["mm"] else f'px {d["px"]}'
+                print(f'{d["color"]:>6} {d["shape"]:<15} at {where}')
+            print("-" * 40)
+
+        elif key == ord("t"):
+            tuning = not tuning 
+            if tuning:
+                open_tuner(colors[tune_names[tune_idx]])
             else: 
-                detections = detect(frame, colors, args.min_area, H)
-                draw(view, detections)
+                cv2.destroyWindow("tune")
+                cv2.destroyWindow("mask")
 
-                if calib: 
-                    pts = np.array(calib["corners_px"], dtype= np.int32)
-                    cv2.polylines(view, [pts], True, (0, 255, 0), 1)
+        elif key == ord("n") and tuning:
+            tune_idx = (tune_idx + 1) % len(tune_names)
+            set_tuner(colors[tune_names[tune_idx]])
 
-                    status = f"objects={len(detections)} calibrated={'yes' if H is not None else 'no (press K)'}"
-                    if tuning:
-                        status += f" tuning={tune_names[tune_idx]} (n=next, s=save)"
-                    cv2.putText(view, status, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+        elif key == ord("s"):
+            save_json(COLORS_FILE, colors)
 
-                    cv2.imshow("vision", view)
-                    if tuning:
-                        hsv = cv2.cvtColor(cv2.GaussianBlur(frame, (5, 5), 0), cv2.COLOR_BGR2HSV)
-                        cv2.imshow("mask", clean(color_mask(hsv, colors[tune_names[tune_idx]])))
-
-                    key = cv2.waitKey(1) & 0xFF
-
-                    if key in (ord("q"), 27):
-                        break
-                    elif key == ord(" "):
-                        paused = not paused
-
-                    elif key == ord("p"):
-                        if not detections:
-                            print("no objects detected")
-                        for d in detections:
-                            where = f'{d["mm"][0]:.1f}, {d["mm"][1]:.1f} mm' if d["mm"] else f'px {d["px"]}'
-                            print(f'{d["color"]:.6} {d["shape"]:<15} at {where}')
-                        print("-" * 40)
-
-                    elif key == ord("t"):
-                        tuning = not tuning 
-                        if tuning:
-                            open_tuner(colors[tune_names[tune_idx]])
-                        else: 
-                            cv2.destroyWindow("tune")
-                            cv2.destroyWindow("mask")
-
-                    elif key == ord("n") and tuning:
-                        tune_idx = (tune_idx + 1) % len(tune_names)
-                        set_tuner(colors[tune_names[tune_idx]])
-
-                    elif key == ord("s"):
-                        save_json(COLORS_FILE, colors)
-
-                    elif key == ord("k"):
-                        calibrating = True
-                        clicks.clear()
+        elif key == ord("k"):
+            calibrating = True
+            clicks.clear()
             
-            cap.release()
-            cv2.destroyAllWindows()
+    cap.release()
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
