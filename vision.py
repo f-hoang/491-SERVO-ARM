@@ -220,7 +220,7 @@ def main():
                 pts = np.array(calib["corners_px"], dtype= np.int32)
                 cv2.polylines(view, [pts], True, (0, 255, 0), 1)
 
-            status = f"objects={len(detections)} calibrated={'yes' if H is not None else 'no (press K)'}"
+            status = f"objects={len(detections)} calibrated={'yes' if H is not None else 'no (press k)'}"
             if tuning:
                 status += f" tuning={tune_names[tune_idx]} (n=next, s=save)"
             cv2.putText(view, status, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
