@@ -22,6 +22,10 @@ DRAW_BGR = {
     "yellow": (0, 220, 255),
 }
 
+# Sliders for adjusting the color ranges. 
+TRACKBARS = ["H lo", "H hi", "S, lo", "S, hi", "V, lo", "V, hi"]
+
+
 def color_mask(hsv, rng):
     """White where a pixel falls inside this color's HSV range."""
     h1, s1, v1 = rng["lo"]
@@ -83,6 +87,23 @@ def detect(frame, colors, min_area=800, homography=None):
     found.sort(key=lambda d: d["area"], reverse = True)
     return found
 
+def draw(frame, detections):
+    for d in detections:
+        bgr = DRAW_BGR.get(d["color"], (0, 255, 0))
+        x,y,w,h = d["bbox"]
+        cv2.drawContours(frame, [d["contour"]], -1, bgr, 2)
+        cv2.circle(frame, d["px"], 4, (255, 255, 255), -1)
+
+        label = f'{d["color"]} {d["shape"]}'
+        if d["mm"] is not None: 
+            label += f' ({d["mm"][0]:.0f}, {d["mm"][1]:.0f}) mm'
+
+        cv2.putText(frame, label, (x, max(y -6, 12)), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, label, (x, max(y-6, 12)), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, bgr, 1, cv2.LINE_AA)
+
+        
 def make_homography(corners_px, width_mm, height_mm):
     """Pixel corners (TR, TL, BL, BR) -> matrix that maps to pixel on table."""
     src = np.array(corners_px, dtype=np.float32)
@@ -94,6 +115,7 @@ def px_to_mm(pt, homography):
     x, y = cv2.perspectiveTransform(p, homography)[0][0]
     return (float(x), float(y))
 
+""" Fucntions that create a save file for the settings. """
 def load_json(path, default):
     if os.path.exists(path):
         with open(path) as f:
@@ -105,3 +127,60 @@ def save_json(path, data):
         json.dump(data, f, indent=2)
     print(f"Saved {path}")
 
+def open_tuner(rng):
+    cv2.namedWidow("true")
+    for i, name in enumerate(TRACKBARS):
+        cv2.createTracjbar(name, "tune", 0, 179 if i < 2 else 255, lambda v: None)
+    set_tuner(rng)
+
+def set_tuner(rng):
+    vals = [rng["lo"][0], rng["hi"][0], rng["lo"][1], rng["hi"][1], rng["lo"][2], rng["hi"][2]]
+    for name, v in zip(TRACKBARS, vals):
+        cv2.setTrackbarPos(name, "tune", int(v))
+
+def read_tuner(): 
+    h1, h2, s1, s2, v1, v2 = (cv2.getTrckbarPos(n, "tune") for n in TRACKBARS)
+    return {"lo": [h1, s1, v1], "hi": [h2, s2, v2]}
+
+def main():
+    ap = argparse.ArgumentParrser()
+    ap.add_agrument("--source", default="0", help="camera index or video file path")
+    ap.add_argument("---min-area", type=int, default=800, help="ignore blops smaller than this (pixels)")
+    ap.add_argument("---width", type=int, default=640, help="resize frames to this width")
+    ap.add_argument("--work-w", type=float, default=279.4, help="workspace width in mm (default: letter paper size)")
+    ap.add_argument("--work-h", type=float, default=215.9, help="workspace height in mm")
+    args = ap.parse_args()
+
+    source = int(args.source) if args.source.isdigit() else args.source
+    cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        raise SystemExit(f"Could not open camera/source: {args.source}" 
+                         "(on a Mac, allow camera access for your terminal in System Settings)")
+
+    colors = load_json(COLORS_FILE, DEFAULT_COLORS)
+    calib = load_json(CALIB_FILE, None)
+    H = None
+    if calib and calib.get("frame_wdith") == args.width:
+        H = make_homography(calib["corners_px"], calib["width_mm"], calib["height_mm"])
+        print("loaded calibration form", CALIB_FILE)
+
+    clicks = []
+    calibrating = False
+
+    def on_click(event, x, y, flags, param):
+        if calibrating and event == cv2.EVENT_LBUTTONDOWN and len(clicks) < 4:
+            clicks.append([x,y])
+
+    cv2.namedWindow("vision")
+    cv2.setMouseCallback("vision", on_click)
+
+    tuning = False
+    tune_names = list(colors.keys())
+    tune_idx = 0
+    paused = False
+    frame = None
+    detections = []
+
+    
+
+    
