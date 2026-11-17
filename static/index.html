@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>491 Servo Arm</title>
+<style>
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;display:flex;min-height:100vh;background:#f4f2ed;color:#1c1b19;font:14px Inter,system-ui,sans-serif}
+aside{width:190px;flex:none;background:#1c1b19;color:#cfcbc2;padding:20px 12px;display:flex;flex-direction:column;gap:6px}
+aside b{color:#fff;padding:0 10px}aside small{padding:0 10px 14px;color:#a39f94}
+aside .nav{background:none;border:0;color:inherit;text-align:left;padding:12px 10px;border-radius:6px;font:inherit;cursor:pointer}
+aside .nav.on{background:#2c2a27;color:#fff}
+.st{margin-top:auto;border:1px solid #3a3835;border-radius:6px;padding:10px;font:11px monospace;line-height:1.9}
+main{flex:1;min-width:0;padding:22px;display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.col{display:flex;flex-direction:column;gap:16px}
+.card{background:#fff;border:1px solid #e3dfd6;border-radius:8px;padding:16px}
+h1{margin:0;font-size:22px}h2{margin:0 0 10px;font-size:13px}
+.mut{color:#5d5a52;font-size:12px}.mono{font:12px monospace}
+button{font:600 12px Inter,system-ui,sans-serif;min-height:44px;padding:0 14px;border-radius:6px;border:1px solid #d6d1c6;background:#fff;color:#1c1b19;cursor:pointer}
+button.pri{background:#b04e26;border-color:#b04e26;color:#fff}button.on{background:#1c1b19;color:#fff}
+button:disabled{opacity:.45;cursor:not-allowed}
+.bar{display:flex;gap:8px;flex-wrap:wrap}.row{display:flex;justify-content:space-between;padding:5px 0;font-size:12px}
+img{width:100%;display:block;border-radius:6px;background:#e8e4d9;min-height:200px}
+.obj{display:block;width:100%;text-align:left;margin-bottom:6px;font:12px monospace}
+#log{line-height:1.8;max-height:200px;overflow:auto}#msg{color:#b04e26;min-height:18px;font-size:12px}
+</style></head><body>
+<aside><b>491 SERVO ARM</b><small>vision pick &amp; place</small>
+<button class="nav on" id="t-run" onclick="tab('run')">Run</button>
+<button class="nav" id="t-cal" onclick="tab('cal')">Calibrate</button>
+<div class="st" id="sb"></div></aside>
+<main>
+<div class="col" style="flex:2 1 460px">
+<section class="card"><h2>Camera &middot; contour view</h2><img src="/video" alt="Live camera with detected objects"></section>
+<section class="card"><h2>Event log</h2><div id="log" class="mono mut"></div></section></div>
+<div class="col" style="flex:1 1 320px">
+<div id="msg" role="status"></div>
+<section class="card"><h2>Vision</h2><div class="bar" id="modes"></div>
+<div class="row" style="margin-top:8px"><label for="ma">Min area</label><span class="mono" id="mav"></span></div>
+<input id="ma" type="range" min="100" max="20000" step="100" style="width:100%" oninput="mav.textContent=this.value+' px'" onchange="api('settings',{min_area:+this.value})">
+</section>
+<section class="card"><h2>Detected objects <span class="mut">(click to set target)</span></h2><div id="objs"></div></section>
+<div id="run" class="col">
+<section class="card"><h2>Pick</h2><div class="bar">
+<button class="pri" id="pick" onclick="api('pick',{})">Pick target</button>
+<button onclick="api('home',{})">Home arm</button><button onclick="api('stop',{})">Stop</button></div>
+<div class="mut" style="margin-top:8px">Drops at the point set by DROP in server.py.</div></section></div>
+<div id="cal" class="col" hidden>
+<section class="card"><h2>Jog arm</h2>
+<div class="bar" style="margin-bottom:8px"><label for="step" class="mut" style="align-self:center">Step</label>
+<select id="step" style="min-height:44px"><option>1</option><option>5</option><option>10</option></select><span class="mut" style="align-self:center">mm</span></div>
+<div class="bar"><button onclick="jog('x',-1)">X&minus;</button><button onclick="jog('x',1)">X+</button>
+<button onclick="jog('y',-1)">Y&minus;</button><button onclick="jog('y',1)">Y+</button>
+<button onclick="jog('z',-1)">Z&minus;</button><button onclick="jog('z',1)">Z+</button>
+<button onclick="api('gripper',{})">Toggle gripper</button></div></section>
+<section class="card"><h2>Point pairs</h2>
+<div class="mut" style="margin-bottom:8px">Put a dark marker on the table, jog the tip onto it, select it above, capture. Repeat for 5+ spread-out points.</div>
+<div id="pairs" class="mono"></div>
+<div class="bar" style="margin-top:10px"><button class="pri" onclick="api('calib/capture',{})">Capture point</button>
+<button onclick="api('calib/solve',{})">Solve</button><button onclick="api('calib/reset',{})">Reset</button></div></section></div>
+<section class="card"><h2>Arm state</h2><div id="arm"></div></section>
+</div></main>
+<script>
+const $=id=>document.getElementById(id);
+const api=async(p,b)=>{try{const r=await fetch('/api/'+p,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{});const j=await r.json();$('msg').textContent=j.error||'';return j}catch(e){$('msg').textContent='server not reachable'}};
+const jog=(axis,s)=>api('jog',{axis,step:s*parseFloat($('step').value)});
+function tab(t){$('run').hidden=t!=='run';$('cal').hidden=t!=='cal';$('t-run').classList.toggle('on',t==='run');$('t-cal').classList.toggle('on',t==='cal')}
+async function tick(){
+ const s=await api('state');
+ if(s){
+  $('modes').innerHTML=s.modes.map(m=>`<button class="${m===s.settings.mode?'on':''}" onclick="api('settings',{mode:'${m}'})">${m}</button>`).join('');
+  if(document.activeElement!==$('ma'))$('ma').value=s.settings.min_area;
+  $('mav').textContent=s.settings.min_area+' px';
+  $('objs').innerHTML=s.objs.length?s.objs.map((o,i)=>`<button class="obj ${i===s.settings.target?'pri':''}" onclick="api('settings',{target:${i}})">#${i} ${o.shape} &middot; ${o.area}px &middot; (${o.cx}, ${o.cy})</button>`).join(''):'<span class="mut">nothing detected</span>';
+  const a=s.arm;
+  $('arm').innerHTML=[['Position (mm)',`${a.x.toFixed(1)}, ${a.y.toFixed(1)}, ${a.z.toFixed(1)}`],['Joint 1',a.j1+'°'],['Joint 2',a.j2+'°'],['Gripper',a.gripper]].map(r=>`<div class="row"><span>${r[0]}</span><span class="mono">${r[1]}</span></div>`).join('');
+  $('log').innerHTML=s.log.slice().reverse().join('<br>');
+  $('pairs').innerHTML=s.cal.pairs.map((p,i)=>`P${i+1} px (${p[0]}, ${p[1]}) &rarr; arm (${p[2].toFixed(1)}, ${p[3].toFixed(1)})`).join('<br>')||'<span class="mut">no points yet</span>';
+  $('sb').innerHTML=`&#9679; Arm &middot; ${a.sim?'simulated':'connected'}<br>&#9679; Mode &middot; ${s.settings.mode}<br>&#9679; Calibration &middot; ${s.cal.solved?'ok, err '+s.cal.err+' mm':s.cal.pairs.length+' pts, unsolved'}`;
+  $('pick').disabled=s.busy||!s.cal.solved;
+ }
+ setTimeout(tick,300);
+}
+tick();
+</script></body></html>
