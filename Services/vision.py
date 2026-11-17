@@ -82,5 +82,26 @@ def detect(frame, colors, min_area=800, homography=None):
             })
     found.sort(key=lambda d: d["area"], reverse = True)
     return found
-            
-            
+
+def make_homography(corners_px, width_mm, height_mm):
+    """Pixel corners (TR, TL, BL, BR) -> matrix that maps to pixel on table."""
+    src = np.array(corners_px, dtype=np.float32)
+    dst = np.array([[0,0], [width_mm, 0], [width_mm, height_mm], [0, height_mm]], dtype=np.float32)
+    return cv2.getPerspectiveTransform(src, dst)
+
+def px_to_mm(pt, homography):
+    p = np.array([[pt]], dtype=np.float32)
+    x, y = cv2.perspectiveTransform(p, homography)[0][0]
+    return (float(x), float(y))
+
+def load_json(path, default):
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return default
+
+def save_json(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"Saved {path}")
+
